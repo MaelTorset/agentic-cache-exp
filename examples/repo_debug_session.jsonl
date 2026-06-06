@@ -1,0 +1,9 @@
+{"kind":"user","source":"conversation","text":"We need to debug a QR code onboarding flow and an authentication bug in the same app.","created_at":1}
+{"kind":"file_read","source":"frontend/src/features/qr/Scanner.tsx","text":"QR scanner component handles camera permissions, extracts qrcode payload, and calls /api/qr/claim with the scanned token. The visual state is unrelated to login cookies.","created_at":2}
+{"kind":"decision","source":"notes","text":"Decision: QR onboarding and login authentication are separate route families. Do not mix scanner UI state with auth cookie validation.","created_at":3}
+{"kind":"file_read","source":"backend/src/auth/session.ts","text":"Auth middleware reads the session cookie, verifies the JWT signature, loads the user, and rejects requests when the cookie is missing or expired.","created_at":4}
+{"kind":"error","source":"logs/dev.log","text":"GET /api/me failed with 401 because session cookie was not sent by the browser. Login returned 200 but Set-Cookie used SameSite=None without Secure in local HTTP.","created_at":5}
+{"kind":"command","source":"shell","text":"curl -i http://localhost:3000/api/me returned HTTP/1.1 401 Unauthorized","created_at":6}
+{"kind":"file_read","source":"backend/src/qr/claim.ts","text":"QR claim route validates qr token ownership and marks onboarding as complete. It does not set or refresh auth cookies.","created_at":7}
+{"kind":"assistant","source":"conversation","text":"The next step should focus on cookie attributes in local development, not QR claim logic.","created_at":8}
+{"kind":"decision","source":"notes","text":"Decision: active task is auth cookie delivery. QR context can be omitted unless /api/qr/claim starts failing after auth is fixed.","created_at":9}

@@ -1,0 +1,31 @@
+[project]
+name = "agentic-cache-lab"
+version = "0.1.0"
+description = "Experiments for agentic context routing and cache-aware prompt packing."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Agentic Cache Lab contributors" }]
+maintainers = [{ name = "Agentic Cache Lab contributors" }]
+keywords = ["agents", "llm", "context", "prompt-caching", "kv-cache", "vllm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.scripts]
+acl = "agentic_cache_lab.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
