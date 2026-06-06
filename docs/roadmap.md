@@ -17,6 +17,8 @@ Status: initial scaffold complete.
 - Capture latency and runtime usage metadata when available.
 - Keep offline tests independent from local model availability.
 
+Status: initial OpenAI-compatible harness complete.
+
 ## Milestone 3: Prefix Cache Experiments
 
 - Run the same task with raw history, routed context, and routed stable-prefix prompts.

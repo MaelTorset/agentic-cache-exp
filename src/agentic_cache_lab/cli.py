@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .event_log import load_jsonl
+from .harness import run_model_harness
 from .models import estimate_tokens
 from .packer import PackConfig, PromptPacker
 from .segment_store import SegmentStore
@@ -21,6 +22,20 @@ def main() -> None:
     benchmark.add_argument("--max-prompt-tokens", type=int, default=320)
     benchmark.add_argument("--json", action="store_true", help="Emit JSON only")
 
+    harness = subparsers.add_parser("model-harness", help="Run raw vs routed prompts against a local model server")
+    harness.add_argument("--trace", type=Path, required=True)
+    harness.add_argument("--query", default="Fix the authentication cookie bug. Omit unrelated QR scanner context.")
+    harness.add_argument("--objective", default="Resolve the active coding task with minimal useful context.")
+    harness.add_argument("--max-prompt-tokens", type=int, default=320)
+    harness.add_argument("--base-url", default="http://127.0.0.1:8080")
+    harness.add_argument("--model", default="local-model")
+    harness.add_argument("--api-key", default="local")
+    harness.add_argument("--runs", type=int, default=3)
+    harness.add_argument("--warmup", type=int, default=1)
+    harness.add_argument("--max-output-tokens", type=int, default=32)
+    harness.add_argument("--timeout-seconds", type=float, default=300)
+    harness.add_argument("--echo", action="store_true", help="Use the offline echo client instead of a model server")
+
     args = parser.parse_args()
     if args.command == "benchmark":
         result = run_benchmark(args.trace, args.query, args.objective, args.max_prompt_tokens)
@@ -28,6 +43,22 @@ def main() -> None:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
             print_report(result)
+    elif args.command == "model-harness":
+        result = run_model_harness(
+            trace_path=args.trace,
+            query=args.query,
+            objective=args.objective,
+            max_prompt_tokens=args.max_prompt_tokens,
+            base_url=args.base_url,
+            model=args.model,
+            api_key=args.api_key,
+            runs=args.runs,
+            warmup=args.warmup,
+            max_output_tokens=args.max_output_tokens,
+            echo=args.echo,
+            timeout_seconds=args.timeout_seconds,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
 
 
 def run_benchmark(trace_path: Path, query: str, objective: str, max_prompt_tokens: int) -> dict[str, object]:

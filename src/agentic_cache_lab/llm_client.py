@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
@@ -16,7 +17,7 @@ class LLMResult:
 class EchoClient:
     """Offline client for benchmark plumbing before a real local model is attached."""
 
-    def complete(self, prompt: str) -> LLMResult:
+    def complete(self, prompt: str, max_tokens: int | None = None) -> LLMResult:
         started = time.perf_counter()
         lines = prompt.splitlines()
         preview = "\n".join(lines[-8:])
@@ -30,17 +31,20 @@ class EchoClient:
 class OpenAICompatibleClient:
     """Minimal client for local vLLM/SGLang servers exposing /v1/chat/completions."""
 
-    def __init__(self, base_url: str, model: str, api_key: str = "local") -> None:
+    def __init__(self, base_url: str, model: str, api_key: str = "local", timeout_seconds: float = 300) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
 
-    def complete(self, prompt: str) -> LLMResult:
+    def complete(self, prompt: str, max_tokens: int | None = None) -> LLMResult:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/v1/chat/completions",
@@ -52,8 +56,13 @@ class OpenAICompatibleClient:
             method="POST",
         )
         started = time.perf_counter()
-        with urllib.request.urlopen(request, timeout=120) as response:
-            raw = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"LLM server returned HTTP {exc.code}: {detail}") from exc
         latency_ms = (time.perf_counter() - started) * 1000
-        text = raw["choices"][0]["message"]["content"]
+        message = raw["choices"][0]["message"]
+        text = message.get("content") or message.get("reasoning_content") or ""
         return LLMResult(text=text, latency_ms=latency_ms, usage=raw.get("usage", {}))

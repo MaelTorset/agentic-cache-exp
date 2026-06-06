@@ -15,7 +15,8 @@ This first version does **not** require vLLM, SGLang, LMCache, or any paid API. 
 - Scores segments by relevance, importance, recency, volatility, and token cost.
 - Packs prompts into a stable-prefix / dynamic-suffix layout.
 - Compares raw-history prompts against routed prompts.
-- Includes an OpenAI-compatible local client stub for future vLLM/SGLang integration.
+- Runs raw vs routed prompts against a local OpenAI-compatible model server.
+- Includes an offline echo mode for CI and harness plumbing.
 
 ## Quick Start
 
@@ -48,6 +49,54 @@ Run the smoke benchmark script:
 python scripts/run_benchmark.py
 ```
 
+Run the local-model harness against a llama.cpp/vLLM/SGLang OpenAI-compatible server:
+
+```bash
+acl model-harness \
+  --trace examples/repo_debug_session.jsonl \
+  --base-url http://127.0.0.1:8080 \
+  --model SmolLM2-135M-Instruct-Q8_0 \
+  --runs 5 \
+  --warmup 1 \
+  --max-output-tokens 32
+```
+
+For llama.cpp, start a compatible server separately:
+
+```bash
+llama-server -m /path/to/SmolLM2-135M-Instruct-Q8_0.gguf --port 8080
+```
+
+To test the harness without a model server:
+
+```bash
+acl model-harness --trace examples/repo_debug_session.jsonl --echo
+```
+
+For a heavier synthetic trace suited to an 8k-context local model:
+
+```bash
+python scripts/run_qwen3_4b_harness.py
+```
+
+You can tune it with environment variables:
+
+```bash
+ACL_RUNS=2 ACL_NOISE_BLOCKS=12 ACL_MAX_PROMPT_TOKENS=2048 python scripts/run_qwen3_4b_harness.py
+```
+
+To compare the industry-style raw cached prompt against the Forget routing baseline:
+
+```bash
+python scripts/run_forget_vs_industry.py
+```
+
+Offline smoke:
+
+```bash
+ACL_ECHO=1 python scripts/run_forget_vs_industry.py
+```
+
 ## Example Output
 
 The included fixture simulates a coding session where QR-code work and authentication work were mixed together. The router keeps durable authentication context and omits unrelated QR files from the active prompt.
@@ -74,12 +123,14 @@ src/agentic_cache_lab/
   scorer.py          # relevance / reuse / volatility scoring
   packer.py          # cache-aware prompt packing
   llm_client.py      # offline echo client and local OpenAI-compatible client
+  synthetic.py       # deterministic long-context fixture generation
 benchmarks/
   coding_task_runner.py
 examples/
   repo_debug_session.jsonl
 docs/
   architecture.md
+  local-model-harness.md
   roadmap.md
 tests/
 ```
