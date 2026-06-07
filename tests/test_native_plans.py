@@ -24,7 +24,7 @@ class NativePlanTest(unittest.TestCase):
                     self.assertIsInstance(segment["text"], str)
 
                 for op in plan["ops"]:
-                    self.assertIn(op["op"], {"eval", "copy", "remove", "shift", "keep", "compare"})
+                    self.assertIn(op["op"], {"eval", "copy", "remove", "shift", "keep", "compare", "generate"})
                     if op["op"] == "eval":
                         self.assertIn(op["segment"], segment_ids)
 

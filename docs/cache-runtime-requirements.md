@@ -61,7 +61,36 @@ probe implemented in scripts/run_cache_residency_probe.py
 
 This is useful, but it still does not prove arbitrary KV recomposition.
 
-### 3. Modular KV Recomposition
+### 3. Shared-Prefix KV Branching
+
+The system evaluates a shared prefix once, copies that KV state into semantic
+branches, then continues each branch independently.
+
+Example:
+
+```text
+A
+copy A KV -> A + auth
+copy A KV -> A + QR
+generate from A + auth
+```
+
+Status:
+
+```text
+implemented for llama.cpp native runner
+```
+
+The current native result validates:
+
+```text
+branch logits match scratch logits exactly
+greedy generation from a copied branch matches scratch generation exactly
+```
+
+This is the practical near-term path for semantic cache branching.
+
+### 4. Modular KV Recomposition
 
 The system stores KV blocks for segments and later builds a new active context
 by combining only selected blocks.
@@ -100,6 +129,8 @@ Use:
 
 ```bash
 python scripts/run_cache_residency_probe.py
+python scripts/run_fixture_repo_branch_benchmark.py
+python scripts/run_fixture_repo_native_generation.py
 ```
 
 The script runs:

@@ -180,6 +180,7 @@ remove
 shift
 keep
 compare
+generate
 ```
 
 Example plans:
@@ -197,4 +198,10 @@ For the end-to-end Python router path:
 ```bash
 python scripts/build_semantic_kv_plan.py
 python scripts/run_semantic_branch_benchmark.py
+```
+
+To generate text directly from a copied semantic KV branch:
+
+```bash
+python scripts/run_fixture_repo_native_generation.py
 ```

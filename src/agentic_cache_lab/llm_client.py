@@ -17,7 +17,7 @@ class LLMResult:
 class EchoClient:
     """Offline client for benchmark plumbing before a real local model is attached."""
 
-    def complete(self, prompt: str, max_tokens: int | None = None) -> LLMResult:
+    def complete(self, prompt: str, max_tokens: int | None = None, seed: int | None = None) -> LLMResult:
         started = time.perf_counter()
         lines = prompt.splitlines()
         preview = "\n".join(lines[-8:])
@@ -31,20 +31,30 @@ class EchoClient:
 class OpenAICompatibleClient:
     """Minimal client for local vLLM/SGLang servers exposing /v1/chat/completions."""
 
-    def __init__(self, base_url: str, model: str, api_key: str = "local", timeout_seconds: float = 300) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str = "local",
+        timeout_seconds: float = 300,
+        temperature: float = 0,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self.temperature = temperature
 
-    def complete(self, prompt: str, max_tokens: int | None = None) -> LLMResult:
+    def complete(self, prompt: str, max_tokens: int | None = None, seed: int | None = None) -> LLMResult:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,
+            "temperature": self.temperature,
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if seed is not None:
+            payload["seed"] = seed
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/v1/chat/completions",

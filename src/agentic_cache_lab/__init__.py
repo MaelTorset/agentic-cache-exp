@@ -5,6 +5,7 @@ __version__ = "0.1.0"
 __all__ = [
     "__version__",
     "benchmark_matrix",
+    "bug_resolution_benchmark",
     "cache_probe",
     "coding_benchmark",
     "event_log",

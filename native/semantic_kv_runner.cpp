@@ -335,10 +335,16 @@ static std::vector<llama_token> tokenize(const llama_vocab * vocab, const std::s
 }
 
 static std::string token_piece(const llama_vocab * vocab, llama_token token) {
-    char buf[256];
-    const int n = llama_token_to_piece(vocab, token, buf, sizeof(buf), 0, true);
-    if (n < 0) return "";
-    return std::string(buf, n);
+    std::vector<char> buffer(64);
+    int n = llama_token_to_piece(vocab, token, buffer.data(), static_cast<int32_t>(buffer.size()), 0, true);
+    if (n < 0) {
+        buffer.resize(static_cast<size_t>(-n));
+        n = llama_token_to_piece(vocab, token, buffer.data(), static_cast<int32_t>(buffer.size()), 0, true);
+    }
+    if (n < 0) {
+        throw std::runtime_error("failed to convert token to piece");
+    }
+    return std::string(buffer.data(), static_cast<size_t>(n));
 }
 
 static void decode_tokens(
@@ -454,6 +460,15 @@ struct Comparison {
     llama_token right_top = 0;
 };
 
+struct Generation {
+    std::string label;
+    int32_t seq = 0;
+    int32_t tokens = 0;
+    bool stopped_eog = false;
+    std::string text;
+    double latency_ms = 0.0;
+};
+
 static Comparison compare_logits(const std::string & label, const LogitSnapshot & left, const LogitSnapshot & right) {
     Comparison comparison;
     comparison.label = label;
@@ -490,6 +505,48 @@ static Comparison compare_logits(const std::string & label, const LogitSnapshot 
 
 static void print_error(const std::string & code, const std::string & message) {
     std::printf("{\"error\":\"%s\",\"message\":\"%s\"}\n", json_escape(code).c_str(), json_escape(message).c_str());
+}
+
+static Generation generate_greedy(
+    llama_context * ctx,
+    const llama_vocab * vocab,
+    SequenceState & state,
+    llama_seq_id seq,
+    const std::string & label,
+    int32_t max_tokens
+) {
+    auto started = std::chrono::steady_clock::now();
+    llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
+    sparams.no_perf = true;
+    llama_sampler * sampler = llama_sampler_chain_init(sparams);
+    llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+
+    Generation generation;
+    generation.label = label;
+    generation.seq = seq;
+
+    try {
+        for (int32_t i = 0; i < max_tokens; ++i) {
+            const llama_token token = llama_sampler_sample(sampler, ctx, -1);
+            if (llama_vocab_is_eog(vocab, token)) {
+                generation.stopped_eog = true;
+                break;
+            }
+            generation.text += token_piece(vocab, token);
+            std::vector<llama_token> next = {token};
+            decode_tokens(ctx, next, state.next_pos, seq, true);
+            state.next_pos += 1;
+            state.tokens_evaled += 1;
+            generation.tokens += 1;
+        }
+    } catch (...) {
+        llama_sampler_free(sampler);
+        throw;
+    }
+
+    generation.latency_ms = elapsed_ms(started);
+    llama_sampler_free(sampler);
+    return generation;
 }
 
 int main(int argc, char ** argv) {
@@ -539,6 +596,7 @@ int main(int argc, char ** argv) {
         std::map<int32_t, SequenceState> sequences;
         std::vector<std::string> op_outputs;
         std::vector<Comparison> comparisons;
+        std::vector<Generation> generations;
         const Json & ops = plan.at("ops");
         if (!ops.is_array()) throw std::runtime_error("ops must be an array");
 
@@ -619,6 +677,17 @@ int main(int argc, char ** argv) {
                 }
                 comparisons.push_back(compare_logits(label, sequences[left].logits, sequences[right].logits));
                 item << ",\"left\":" << left << ",\"right\":" << right << ",\"label\":\"" << json_escape(label) << "\"";
+            } else if (type == "generate") {
+                const int32_t seq = get_int(op, "seq");
+                const std::string label = get_string(op, "label");
+                const int32_t max_tokens = get_int_default(op, "max_tokens", 64);
+                SequenceState & state = sequences[seq];
+                Generation generation = generate_greedy(ctx, vocab, state, seq, label, max_tokens);
+                item << ",\"seq\":" << seq << ",\"label\":\"" << json_escape(label) << "\"";
+                item << ",\"tokens\":" << generation.tokens << ",\"stopped_eog\":" << (generation.stopped_eog ? "true" : "false");
+                item << ",\"text\":\"" << json_escape(generation.text) << "\"";
+                item << ",\"generation_latency_ms\":" << generation.latency_ms;
+                generations.push_back(std::move(generation));
             } else {
                 throw std::runtime_error("unknown op: " + type);
             }
@@ -674,6 +743,20 @@ int main(int argc, char ** argv) {
                 c.top_k_overlap,
                 c.left_top,
                 c.right_top);
+        }
+        std::printf("},\n");
+        std::printf("  \"generations\":{");
+        for (size_t i = 0; i < generations.size(); ++i) {
+            const Generation & g = generations[i];
+            std::printf(
+                "%s\"%s\":{\"seq\":%d,\"tokens\":%d,\"stopped_eog\":%s,\"latency_ms\":%.6f,\"text\":\"%s\"}",
+                i == 0 ? "" : ",",
+                json_escape(g.label).c_str(),
+                g.seq,
+                g.tokens,
+                g.stopped_eog ? "true" : "false",
+                g.latency_ms,
+                json_escape(g.text).c_str());
         }
         std::printf("}\n");
         std::printf("}\n");

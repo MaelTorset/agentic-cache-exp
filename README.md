@@ -1,12 +1,57 @@
 # Agentic Cache Lab
 
-Agentic Cache Lab is an experimental Python project for cache-aware context routing in long-running AI agents.
+Agentic Cache Lab is an experimental Python + native llama.cpp project for
+cache-aware context routing in long-running AI agents.
 
 The core idea:
 
 > Agents should not carry their entire raw conversation forever. They should keep a complete external event log, route only the currently useful context into the active prompt, and structure stable context so local inference engines can reuse prefix/KV cache more effectively.
 
-This first version does **not** require vLLM, SGLang, LMCache, or any paid API. It is a small offline benchmark harness that proves the context-routing layer before deeper KV-cache integration.
+This project started as an offline prompt-routing harness. It now also includes
+a native llama.cpp JSON-plan runner that can copy sequence KV state, create
+semantic shared-prefix branches, compare them against scratch evaluation, and
+generate text directly from a copied KV branch.
+
+It does **not** claim arbitrary KV recomposition. In particular, the hard form:
+
+```text
+A + noise + B -> reuse cached B directly as A + B
+```
+
+is still unsafe for a normal causal transformer unless `B` was computed under
+compatible attention and positions. The validated path is semantic
+shared-prefix branching.
+
+## Current Research Claim
+
+The strongest result so far:
+
+> Semantic shared-prefix KV branching preserves greedy generation exactly in
+> the local llama.cpp runtime.
+
+Validated on the fixture repo with Qwen3-4B-Q4_K_M:
+
+```text
+root -> copy root KV -> auth branch -> generate
+matches
+root + auth branch from scratch -> generate
+```
+
+Measured result:
+
+```text
+pre-generation logits:
+  mean_abs_diff: 0
+  cosine_similarity: 1
+  top_k_overlap: 5/5
+
+generation_text_match: true
+```
+
+The quality result is more conservative: routing reduced active prompt tokens
+by about 62% on the fixture benchmark, but Qwen3-4B did not solve the bug better
+than the full noisy prompt. Cache correctness is currently stronger than
+agentic-task quality.
 
 ## What It Does
 
@@ -18,6 +63,10 @@ This first version does **not** require vLLM, SGLang, LMCache, or any paid API. 
 - Compares naive Forget, critical-context Forget, and an oracle relevant-only baseline.
 - Runs raw vs routed prompts against a local OpenAI-compatible model server.
 - Includes an offline echo mode for CI and harness plumbing.
+- Builds semantic branch plans from Python and executes them in native llama.cpp.
+- Copies shared-prefix KV state into semantic branches with `llama_memory_seq_cp`.
+- Compares branch logits against scratch evaluation.
+- Generates text directly from copied KV branches with greedy decoding.
 
 ## Quick Start
 
@@ -175,7 +224,55 @@ python scripts/build_semantic_kv_plan.py
 python scripts/run_semantic_branch_benchmark.py
 ```
 
+To test the same path on a small fake TypeScript repo fixture:
+
+```bash
+python scripts/run_fixture_repo_branch_benchmark.py
+```
+
+To measure bug-fix answer quality over several model runs and attach the native
+KV branch metrics:
+
+```bash
+ACL_BASE_URL=http://127.0.0.1:8082 ACL_RUNS=5 python scripts/run_fixture_repo_quality_matrix.py
+```
+
+To generate directly from a native KV branch and compare against scratch:
+
+```bash
+python scripts/run_fixture_repo_native_generation.py
+```
+
 See `docs/native-kv-probe.md`.
+
+## What The Latest Benchmarks Show
+
+See `benchmark-research-conclusion/` for dated reports. The most important
+current files are:
+
+```text
+2026-06-07-native-kv-branch-generation.md
+2026-06-07-fixture-repo-quality-matrix.md
+2026-06-07-fixture-repo-branch-benchmark.md
+```
+
+Current summary:
+
+```text
+Native KV exactness:
+  shared-prefix branch logits match scratch exactly
+  greedy generation from branch matches scratch exactly
+
+Token efficiency:
+  routed prompt uses about 62% fewer runtime prompt tokens on the fixture task
+
+Quality:
+  no quality win yet on Qwen3-4B for the fake auth-cookie bug
+
+Latency:
+  KV copy is effectively free compared with root prefill
+  end-to-end answer latency is often dominated by generation and prompt-cache state
+```
 
 ## Example Output
 
@@ -196,6 +293,7 @@ Token counts are deterministic estimates for offline experiments. They are not m
 
 ```text
 src/agentic_cache_lab/
+  bug_resolution_benchmark.py  # fixture bug-quality scoring and native generation plans
   cli.py             # CLI entrypoint
   event_log.py       # JSONL trace loading
   models.py          # shared dataclasses and token estimates
@@ -208,22 +306,30 @@ benchmarks/
   coding_task_runner.py
 examples/
   repo_debug_session.jsonl
+  fixtures/shopbug-repo/
 docs/
   architecture.md
   local-model-harness.md
+  native-kv-probe.md
   roadmap.md
+native/
+  semantic_kv_probe.cpp
+  semantic_kv_runner.cpp
 tests/
 ```
 
 ## Roadmap
 
-The next technical milestone is to connect the prompt packer to a local vLLM or SGLang server with prefix caching enabled, then measure:
+The next technical milestone is to move from controlled fixture proof to a more
+credible agent trace:
 
-- time to first token;
-- prompt/prefix token estimates;
-- cache hit signals exposed by the serving runtime;
-- quality regressions when context is omitted;
-- reretrieval events when the packer drops something too aggressively.
+- replay a real anonymized coding-agent session or a larger open-source fixture;
+- compare cold-cache, warm prompt-cache, and native branch-cache modes;
+- measure cache memory footprint as branch count grows;
+- add branch switching before generation: `QR -> auth -> QR -> auth`;
+- improve the task oracle so quality is judged on patch correctness, not only
+  keyword presence;
+- test a stronger local model when available.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/roadmap.md).
 
