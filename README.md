@@ -15,6 +15,7 @@ This first version does **not** require vLLM, SGLang, LMCache, or any paid API. 
 - Scores segments by relevance, importance, recency, volatility, and token cost.
 - Packs prompts into a stable-prefix / dynamic-suffix layout.
 - Compares raw-history prompts against routed prompts.
+- Compares naive Forget, critical-context Forget, and an oracle relevant-only baseline.
 - Runs raw vs routed prompts against a local OpenAI-compatible model server.
 - Includes an offline echo mode for CI and harness plumbing.
 
@@ -96,6 +97,66 @@ Offline smoke:
 ```bash
 ACL_ECHO=1 python scripts/run_forget_vs_industry.py
 ```
+
+To run the long coding-task benchmark with quality checks:
+
+```bash
+python scripts/run_long_coding_task_benchmark.py
+```
+
+Offline smoke:
+
+```bash
+ACL_ECHO=1 python scripts/run_long_coding_task_benchmark.py
+```
+
+For a more credible multi-case matrix:
+
+```bash
+ACL_ECHO=1 python scripts/run_long_coding_matrix.py
+```
+
+To test whether a local runtime keeps prompt shapes cached while alternating
+between full-history and forgotten prompts:
+
+```bash
+python scripts/run_cache_residency_probe.py
+```
+
+The current research benchmark compares:
+
+```text
+industry_raw_cached
+forget_routed_cached_v0
+forget_critical_context_v1
+oracle_relevant_only
+```
+
+See `benchmark-research-conclusion/` for dated results and caveats. The best
+current signal is that `critical_context_v1` improves quality over naive Forget
+while keeping large prompt-token reductions on the synthetic coding task.
+
+See `docs/cache-runtime-requirements.md` for the current boundary between
+active prompt forgetting, whole-prompt cache residency, and true modular KV-cache
+recomposition.
+
+For direct llama.cpp KV-cache experiments, build the native probe:
+
+```bash
+cmake -S native -B build/native-probes
+cmake --build build/native-probes -j 2
+```
+
+Then run:
+
+```bash
+./build/native-probes/semantic-kv-probe \
+  -m /data/llama/models/Qwen3-4B-Q4_K_M.gguf \
+  --threads 10 \
+  --ctx 2048
+```
+
+See `docs/native-kv-probe.md`.
 
 ## Example Output
 
