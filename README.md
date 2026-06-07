@@ -163,7 +163,16 @@ Or execute a JSON KV plan:
   -m /data/llama/models/Qwen3-4B-Q4_K_M.gguf \
   --plan examples/native/prefix_branch_plan.json \
   --threads 10 \
-  --ctx 2048
+  --ctx 2048 \
+  --seqs 8
+```
+
+To generate a semantic branch plan in Python and run it through the native KV
+runner:
+
+```bash
+python scripts/build_semantic_kv_plan.py
+python scripts/run_semantic_branch_benchmark.py
 ```
 
 See `docs/native-kv-probe.md`.

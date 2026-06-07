@@ -199,6 +199,7 @@ struct Args {
     int32_t n_batch = 1024;
     int32_t n_threads = 10;
     int32_t n_gpu_layers = 0;
+    int32_t n_seq_max = 8;
 };
 
 struct Range {
@@ -227,7 +228,7 @@ struct SequenceState {
 };
 
 static void usage(const char * argv0) {
-    std::fprintf(stderr, "usage: %s -m model.gguf --plan plan.json [--threads 10] [--ctx 2048] [--batch 1024]\n", argv0);
+    std::fprintf(stderr, "usage: %s -m model.gguf --plan plan.json [--threads 10] [--ctx 2048] [--batch 1024] [--seqs 8]\n", argv0);
 }
 
 static Args parse_args(int argc, char ** argv) {
@@ -243,6 +244,8 @@ static Args parse_args(int argc, char ** argv) {
             args.n_ctx = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--batch") == 0 && i + 1 < argc) {
             args.n_batch = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--seqs") == 0 && i + 1 < argc) {
+            args.n_seq_max = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--ngl") == 0 && i + 1 < argc) {
             args.n_gpu_layers = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
@@ -511,7 +514,7 @@ int main(int argc, char ** argv) {
         llama_context_params ctx_params = llama_context_default_params();
         ctx_params.n_ctx = args.n_ctx;
         ctx_params.n_batch = args.n_batch;
-        ctx_params.n_seq_max = 16;
+        ctx_params.n_seq_max = args.n_seq_max;
         ctx_params.no_perf = false;
         llama_context * ctx = llama_init_from_model(model, ctx_params);
         if (ctx == nullptr) throw std::runtime_error("failed to create context");
@@ -627,7 +630,7 @@ int main(int argc, char ** argv) {
         std::printf("{\n");
         std::printf("  \"benchmark\":\"semantic_kv_plan\",\n");
         std::printf("  \"model\":\"%s\",\n", json_escape(args.model_path).c_str());
-        std::printf("  \"config\":{\"top_k\":%d,\"ctx\":%d,\"threads\":%d},\n", top_k, args.n_ctx, args.n_threads);
+        std::printf("  \"config\":{\"top_k\":%d,\"ctx\":%d,\"threads\":%d,\"seqs\":%d},\n", top_k, args.n_ctx, args.n_threads, args.n_seq_max);
         std::printf("  \"segments\":{");
         bool first = true;
         for (const auto & [id, segment] : segments) {

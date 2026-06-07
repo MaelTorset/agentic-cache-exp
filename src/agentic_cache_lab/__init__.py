@@ -15,4 +15,5 @@ __all__ = [
     "packer",
     "scorer",
     "segment_store",
+    "semantic_kv_planner",
 ]

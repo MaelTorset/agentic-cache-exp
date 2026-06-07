@@ -167,7 +167,8 @@ Run:
   --plan examples/native/prefix_branch_plan.json \
   --threads 10 \
   --ctx 2048 \
-  --batch 1024
+  --batch 1024 \
+  --seqs 8
 ```
 
 Supported ops:
@@ -190,3 +191,10 @@ examples/native/middle_removal_plan.json
 
 This lets the Python semantic router produce cache-operation plans instead of
 only producing prompts.
+
+For the end-to-end Python router path:
+
+```bash
+python scripts/build_semantic_kv_plan.py
+python scripts/run_semantic_branch_benchmark.py
+```
