@@ -20,6 +20,7 @@ def main() -> None:
     benchmark.add_argument("--query", default="Fix the authentication cookie bug. Omit unrelated QR scanner context.")
     benchmark.add_argument("--objective", default="Resolve the active coding task with minimal useful context.")
     benchmark.add_argument("--max-prompt-tokens", type=int, default=320)
+    benchmark.add_argument("--critical-context", action="store_true", help="Enable critical_context_v1 packing")
     benchmark.add_argument("--json", action="store_true", help="Emit JSON only")
 
     harness = subparsers.add_parser("model-harness", help="Run raw vs routed prompts against a local model server")
@@ -38,7 +39,13 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "benchmark":
-        result = run_benchmark(args.trace, args.query, args.objective, args.max_prompt_tokens)
+        result = run_benchmark(
+            args.trace,
+            args.query,
+            args.objective,
+            args.max_prompt_tokens,
+            critical_context=args.critical_context,
+        )
         if args.json:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
@@ -61,11 +68,17 @@ def main() -> None:
         print(json.dumps(result, indent=2, sort_keys=True))
 
 
-def run_benchmark(trace_path: Path, query: str, objective: str, max_prompt_tokens: int) -> dict[str, object]:
+def run_benchmark(
+    trace_path: Path,
+    query: str,
+    objective: str,
+    max_prompt_tokens: int,
+    critical_context: bool = False,
+) -> dict[str, object]:
     events = load_jsonl(trace_path)
     store = SegmentStore()
     segments = store.add_events(events)
-    packer = PromptPacker(config=PackConfig(max_prompt_tokens=max_prompt_tokens))
+    packer = PromptPacker(config=PackConfig(max_prompt_tokens=max_prompt_tokens, critical_context=critical_context))
     packed = packer.pack(segments, query=query, objective=objective)
 
     raw_history = "\n\n".join(f"{event.kind.value.upper()} {event.source}\n{event.text}" for event in events)
@@ -78,6 +91,7 @@ def run_benchmark(trace_path: Path, query: str, objective: str, max_prompt_token
         "trace": str(trace_path),
         "events": len(events),
         "segments": len(segments),
+        "packing_strategy": "critical_context_v1" if critical_context else "segment_scorer_v0",
         "raw_tokens_estimate": raw_tokens,
         "routed_tokens_estimate": packed.token_estimate,
         "stable_prefix_tokens_estimate": packed.stable_token_estimate,

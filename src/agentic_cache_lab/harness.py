@@ -6,7 +6,7 @@ from statistics import mean
 
 from .event_log import load_jsonl
 from .llm_client import EchoClient, LLMResult, OpenAICompatibleClient
-from .models import estimate_tokens
+from .models import AgentEvent, estimate_tokens
 from .packer import PackConfig, PromptPacker
 from .segment_store import SegmentStore
 
@@ -28,14 +28,27 @@ def build_prompt_candidates(
     events = load_jsonl(trace_path)
     store = SegmentStore()
     segments = store.add_events(events)
-    packed = PromptPacker(config=PackConfig(max_prompt_tokens=max_prompt_tokens)).pack(
+    packed_v0 = PromptPacker(config=PackConfig(max_prompt_tokens=max_prompt_tokens)).pack(
+        segments,
+        query=query,
+        objective=objective,
+    )
+    packed_v1 = PromptPacker(
+        config=PackConfig(max_prompt_tokens=max_prompt_tokens, critical_context=True)
+    ).pack(
         segments,
         query=query,
         objective=objective,
     )
 
     raw_history = "\n\n".join(f"{event.kind.value.upper()} {event.source}\n{event.text}" for event in events)
-    raw_prompt = f"{raw_history}\n\nUser query:\n{query}"
+    raw_prompt = (
+        "You are a local coding agent experimenting with cache-aware context routing.\n"
+        f"Current objective: {objective}\n"
+        "Use the full active history below.\n\n"
+        f"{raw_history}\n\nUser query:\n{query}"
+    )
+    oracle_relevant_prompt = build_oracle_relevant_prompt(events, query=query, objective=objective)
     return [
         PromptCandidate(
             mode="raw",
@@ -45,11 +58,47 @@ def build_prompt_candidates(
         ),
         PromptCandidate(
             mode="routed",
-            prompt=packed.prompt,
-            token_estimate=packed.token_estimate,
-            stable_prefix_token_estimate=packed.stable_token_estimate,
+            prompt=packed_v0.prompt,
+            token_estimate=packed_v0.token_estimate,
+            stable_prefix_token_estimate=packed_v0.stable_token_estimate,
+        ),
+        PromptCandidate(
+            mode="routed_critical",
+            prompt=packed_v1.prompt,
+            token_estimate=packed_v1.token_estimate,
+            stable_prefix_token_estimate=packed_v1.stable_token_estimate,
+        ),
+        PromptCandidate(
+            mode="oracle_relevant",
+            prompt=oracle_relevant_prompt,
+            token_estimate=estimate_tokens(oracle_relevant_prompt),
+            stable_prefix_token_estimate=0,
         ),
     ]
+
+
+def build_oracle_relevant_prompt(events: list[AgentEvent], query: str, objective: str) -> str:
+    relevant_history = "\n\n".join(
+        f"{event.kind.value.upper()} {event.source}\n{event.text}" for event in events if is_oracle_relevant_event(event)
+    )
+    return (
+        "You are a local coding agent experimenting with cache-aware context routing.\n"
+        f"Current objective: {objective}\n"
+        "Use only the relevant history below. This is an oracle upper-bound baseline, not a deployable policy.\n\n"
+        f"{relevant_history}\n\nUser query:\n{query}"
+    )
+
+
+def is_oracle_relevant_event(event: AgentEvent) -> bool:
+    source = event.source.lower()
+    text = event.text.lower()
+    if any(marker in source for marker in ("noise_file", "/qr/", "/frontend/", "/billing/", "/analytics/")):
+        return False
+    if any(marker in source for marker in ("backend/src/auth", "backend/tests/auth", "logs/auth")):
+        return True
+    if source in {"notes", "conversation"}:
+        return "auth cookie" in text or "authentication cookie" in text
+    return False
 
 
 def run_model_harness(
@@ -131,6 +180,7 @@ def sample_result(run_index: int, prompt: PromptCandidate, result: LLMResult) ->
         "output_tokens_estimate": output_tokens,
         "output_tokens_per_second_estimate": round(output_tokens / latency_seconds, 2),
         "usage": result.usage,
+        "output_text": result.text,
         "output_preview": result.text[:240],
     }
 

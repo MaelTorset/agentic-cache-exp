@@ -57,8 +57,11 @@ class SegmentScorer:
         )
         excluded_overlap = excluded_labels.intersection(segment.labels)
         if excluded_overlap:
-            penalty = 0.7 if segment.kind == SegmentKind.DECISION else 2.2
-            score -= penalty * len(excluded_overlap)
+            if segment.kind in {SegmentKind.FILE, SegmentKind.COMMAND}:
+                score = -999.0
+            else:
+                penalty = 0.7 if segment.kind == SegmentKind.DECISION else 6.0
+                score -= penalty * len(excluded_overlap)
 
         reason = (
             f"labels={','.join(segment.labels)} relevance={relevance:.2f} "
@@ -81,12 +84,14 @@ def terms(text: str) -> set[str]:
 
 def labels_to_exclude(query: str) -> set[str]:
     exclusions: set[str] = set()
-    negative_words = ("drop", "omit", "ignore", "unrelated", "without", "exclude")
+    negative_words = ("drop", "omit", "ignore", "forget", "unrelated", "without", "exclude")
     for label, aliases in {
         "qr": ("qr", "qrcode", "scanner"),
         "auth": ("auth", "authentication", "login"),
         "frontend": ("frontend", "ui"),
         "backend": ("backend", "api"),
+        "billing": ("billing", "invoice", "payment", "stripe"),
+        "analytics": ("analytics", "tracking", "metric"),
         "cache": ("cache", "kv"),
     }.items():
         if any(has_nearby_negative(query, alias, negative_words) for alias in aliases):

@@ -86,3 +86,28 @@ Offline smoke:
 ```bash
 ACL_ECHO=1 python scripts/run_forget_vs_industry.py
 ```
+
+## Long Coding Task Benchmark
+
+This benchmark makes both modes ingest irrelevant QR, frontend, billing, and analytics files before solving an auth cookie bug. It reports token efficiency and simple quality checks.
+
+```bash
+python scripts/run_long_coding_task_benchmark.py
+```
+
+Offline smoke:
+
+```bash
+ACL_ECHO=1 python scripts/run_long_coding_task_benchmark.py
+```
+
+Run a matrix instead of a single case:
+
+```bash
+ACL_NOISE_FILES=4,8,12 \
+ACL_OUTPUT_BUDGETS=48,96 \
+ACL_WARMUP=1 \
+ACL_RUNS=1 \
+ACL_TIMEOUT_SECONDS=900 \
+python scripts/run_long_coding_matrix.py
+```

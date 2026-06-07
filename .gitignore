@@ -16,4 +16,5 @@ build/
 .coverage
 htmlcov/
 benchmark-output/
+benchmark-results/
 reports/

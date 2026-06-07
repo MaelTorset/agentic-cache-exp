@@ -9,8 +9,10 @@ LABEL_KEYWORDS: dict[str, tuple[str, ...]] = {
     "auth": ("auth", "token", "login", "session", "cookie", "jwt", "password"),
     "qr": ("qr", "qrcode", "code qr", "scan"),
     "cache": ("cache", "kv", "prefix", "prompt", "prefill", "ttl"),
-    "frontend": ("ui", "component", "css", "react", "page", "button"),
+    "frontend": ("frontend", "component", "css", "react", "page", "button"),
     "backend": ("api", "server", "route", "database", "sql", "endpoint"),
+    "billing": ("billing", "invoice", "payment", "stripe", "subscription"),
+    "analytics": ("analytics", "event", "tracking", "metric", "funnel"),
     "error": ("error", "traceback", "exception", "failed", "bug"),
 }
 

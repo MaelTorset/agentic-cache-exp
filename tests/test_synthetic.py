@@ -17,13 +17,16 @@ class SyntheticTraceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             trace_path = Path(directory) / "trace.jsonl"
             dump_jsonl(build_long_context_events(noise_blocks=24), trace_path)
-            raw, routed = build_prompt_candidates(
+            prompts = build_prompt_candidates(
                 trace_path=trace_path,
                 query="Focus on auth cookies. Omit QR scanner and frontend noise.",
                 objective="Measure routing savings.",
                 max_prompt_tokens=2048,
             )
+            by_mode = {prompt.mode: prompt for prompt in prompts}
 
+        raw = by_mode["raw"]
+        routed = by_mode["routed"]
         self.assertEqual(raw.mode, "raw")
         self.assertEqual(routed.mode, "routed")
         self.assertGreater(raw.token_estimate, routed.token_estimate * 2)

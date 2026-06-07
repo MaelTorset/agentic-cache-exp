@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class HarnessTest(unittest.TestCase):
-    def test_build_prompt_candidates_returns_raw_and_routed(self) -> None:
+    def test_build_prompt_candidates_returns_all_benchmark_modes(self) -> None:
         prompts = build_prompt_candidates(
             trace_path=ROOT / "examples" / "repo_debug_session.jsonl",
             query="Fix auth cookies. Omit QR scanner context.",
@@ -22,7 +22,7 @@ class HarnessTest(unittest.TestCase):
             max_prompt_tokens=320,
         )
 
-        self.assertEqual([prompt.mode for prompt in prompts], ["raw", "routed"])
+        self.assertEqual([prompt.mode for prompt in prompts], ["raw", "routed", "routed_critical", "oracle_relevant"])
         self.assertGreater(prompts[0].token_estimate, prompts[1].stable_prefix_token_estimate)
 
     def test_echo_harness_runs_without_model_server(self) -> None:
@@ -42,9 +42,11 @@ class HarnessTest(unittest.TestCase):
         )
 
         self.assertEqual(result["runs"], 1)
-        self.assertEqual(len(result["samples"]), 2)
+        self.assertEqual(len(result["samples"]), 4)
         self.assertIn("raw", result["summary"])
         self.assertIn("routed", result["summary"])
+        self.assertIn("routed_critical", result["summary"])
+        self.assertIn("oracle_relevant", result["summary"])
 
     def test_sample_result_prefers_runtime_completion_tokens(self) -> None:
         prompts = build_prompt_candidates(

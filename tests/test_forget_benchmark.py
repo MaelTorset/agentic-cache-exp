@@ -34,9 +34,12 @@ class ForgetBenchmarkTest(unittest.TestCase):
 
         self.assertEqual(result["benchmark"], "forget_vs_industry")
         self.assertIn("industry_raw_cached", result["model_harness"]["summary"])
-        self.assertIn("forget_routed_cached", result["model_harness"]["summary"])
+        self.assertIn("forget_routed_cached_v0", result["model_harness"]["summary"])
+        self.assertIn("forget_critical_context_v1", result["model_harness"]["summary"])
+        self.assertIn("oracle_relevant_only", result["model_harness"]["summary"])
         self.assertGreater(len(result["forgotten_sources"]), 0)
-        self.assertGreater(result["routing"]["estimated_token_reduction_ratio"], 0.35)
+        self.assertGreater(result["routing"]["forget_routed_cached_v0"]["estimated_token_reduction_ratio"], 0.35)
+        self.assertGreater(result["routing"]["forget_critical_context_v1"]["estimated_token_reduction_ratio"], 0.2)
 
 
 if __name__ == "__main__":

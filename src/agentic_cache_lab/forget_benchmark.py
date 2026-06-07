@@ -8,8 +8,16 @@ from .harness import run_model_harness
 
 MODE_NAMES = {
     "raw": "industry_raw_cached",
-    "routed": "forget_routed_cached",
+    "routed": "forget_routed_cached_v0",
+    "routed_critical": "forget_critical_context_v1",
+    "oracle_relevant": "oracle_relevant_only",
 }
+
+COMPARISON_MODES = (
+    "forget_routed_cached_v0",
+    "forget_critical_context_v1",
+    "oracle_relevant_only",
+)
 
 
 def run_forget_vs_industry(
@@ -40,37 +48,48 @@ def run_forget_vs_industry(
         echo=echo,
         timeout_seconds=timeout_seconds,
     )
-    routing = run_benchmark(
+    routing_v0 = run_benchmark(
         trace_path=trace_path,
         query=query,
         objective=objective,
         max_prompt_tokens=max_prompt_tokens,
     )
+    routing_v1 = run_benchmark(
+        trace_path=trace_path,
+        query=query,
+        objective=objective,
+        max_prompt_tokens=max_prompt_tokens,
+        critical_context=True,
+    )
 
     relabel_modes(harness)
-    included_sources = [str(item["source"]) for item in routing["included_segments"]]
-    omitted_sources = [str(item["source"]) for item in routing["omitted_segments"]]
+    included_sources_by_mode = {
+        "forget_routed_cached_v0": [str(item["source"]) for item in routing_v0["included_segments"]],
+        "forget_critical_context_v1": [str(item["source"]) for item in routing_v1["included_segments"]],
+    }
+    omitted_sources_by_mode = {
+        "forget_routed_cached_v0": [str(item["source"]) for item in routing_v0["omitted_segments"]],
+        "forget_critical_context_v1": [str(item["source"]) for item in routing_v1["omitted_segments"]],
+    }
 
     return {
         "benchmark": "forget_vs_industry",
         "interpretation": {
             "industry_raw_cached": "Full rolling history with provider/runtime prompt cache. It keeps every useless file in the active prompt.",
-            "forget_routed_cached": "Same event log preserved externally, but irrelevant segments are omitted from the active prompt while runtime cache remains enabled.",
-            "forget_decider": "segment_scorer_v0",
+            "forget_routed_cached_v0": "Same event log preserved externally, but irrelevant segments are omitted from the active prompt while runtime cache remains enabled.",
+            "forget_critical_context_v1": "Adds a protected critical-context lane for failed tests, expected behavior, root-cause evidence, and likely patch targets.",
+            "forget_decider": "segment_scorer_v0 + critical_context_v1",
         },
         "trace": str(trace_path),
         "query": query,
         "objective": objective,
-        "included_sources": included_sources,
-        "forgotten_sources": omitted_sources,
+        "included_sources": included_sources_by_mode["forget_routed_cached_v0"],
+        "forgotten_sources": omitted_sources_by_mode["forget_routed_cached_v0"],
+        "included_sources_by_mode": included_sources_by_mode,
+        "forgotten_sources_by_mode": omitted_sources_by_mode,
         "routing": {
-            "raw_tokens_estimate": routing["raw_tokens_estimate"],
-            "forget_tokens_estimate": routing["routed_tokens_estimate"],
-            "stable_prefix_tokens_estimate": routing["stable_prefix_tokens_estimate"],
-            "estimated_token_reduction_ratio": reduction_ratio(
-                routing["raw_tokens_estimate"],
-                routing["routed_tokens_estimate"],
-            ),
+            "forget_routed_cached_v0": routing_summary(routing_v0),
+            "forget_critical_context_v1": routing_summary(routing_v1),
         },
         "model_harness": harness,
         "comparison": compare_samples(harness["samples"]),
@@ -87,22 +106,45 @@ def relabel_modes(result: dict[str, object]) -> None:
 
 def compare_samples(samples: list[dict[str, object]]) -> dict[str, object]:
     industry = [sample for sample in samples if sample["mode"] == "industry_raw_cached"]
-    forget = [sample for sample in samples if sample["mode"] == "forget_routed_cached"]
-    if not industry or not forget:
+    if not industry:
         return {}
 
+    return {
+        mode: compare_mode_to_industry(industry, mode_samples)
+        for mode in COMPARISON_MODES
+        if (mode_samples := [sample for sample in samples if sample["mode"] == mode])
+    }
+
+
+def compare_mode_to_industry(
+    industry: list[dict[str, object]],
+    candidate: list[dict[str, object]],
+) -> dict[str, object]:
     industry_prompt = average_int(sample.get("runtime_prompt_tokens") for sample in industry)
-    forget_prompt = average_int(sample.get("runtime_prompt_tokens") for sample in forget)
+    candidate_prompt = average_int(sample.get("runtime_prompt_tokens") for sample in candidate)
     industry_latency = average_float(sample["latency_ms"] for sample in industry)
-    forget_latency = average_float(sample["latency_ms"] for sample in forget)
+    candidate_latency = average_float(sample["latency_ms"] for sample in candidate)
 
     return {
-        "runtime_prompt_token_reduction_ratio": reduction_ratio(industry_prompt, forget_prompt),
-        "latency_reduction_ratio": reduction_ratio(industry_latency, forget_latency),
+        "runtime_prompt_token_reduction_ratio": reduction_ratio(industry_prompt, candidate_prompt),
+        "latency_reduction_ratio": reduction_ratio(industry_latency, candidate_latency),
         "industry_runtime_prompt_tokens_avg": industry_prompt,
-        "forget_runtime_prompt_tokens_avg": forget_prompt,
+        "candidate_runtime_prompt_tokens_avg": candidate_prompt,
         "industry_latency_ms_avg": round(industry_latency, 2) if industry_latency is not None else None,
-        "forget_latency_ms_avg": round(forget_latency, 2) if forget_latency is not None else None,
+        "candidate_latency_ms_avg": round(candidate_latency, 2) if candidate_latency is not None else None,
+    }
+
+
+def routing_summary(result: dict[str, object]) -> dict[str, object]:
+    return {
+        "strategy": result["packing_strategy"],
+        "raw_tokens_estimate": result["raw_tokens_estimate"],
+        "forget_tokens_estimate": result["routed_tokens_estimate"],
+        "stable_prefix_tokens_estimate": result["stable_prefix_tokens_estimate"],
+        "estimated_token_reduction_ratio": reduction_ratio(
+            result["raw_tokens_estimate"],
+            result["routed_tokens_estimate"],
+        ),
     }
 
 
