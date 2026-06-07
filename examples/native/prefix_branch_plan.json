@@ -1,0 +1,31 @@
+{
+  "config": {
+    "top_k": 5,
+    "suppress_logs": true
+  },
+  "segments": [
+    {
+      "id": "root",
+      "text": "System: answer tersely.\nShared prefix: auth cookie bug report.\n",
+      "add_bos": true
+    },
+    {
+      "id": "qr",
+      "text": "Noise: QR scanner camera settings, billing dashboard columns, analytics events.\n"
+    },
+    {
+      "id": "auth",
+      "text": "Task: local HTTP rejects SameSite=None without Secure. Expected local cookie is SameSite=Lax. Answer:"
+    }
+  ],
+  "ops": [
+    {"op": "eval", "seq": 0, "segment": "root", "logits": false},
+    {"op": "copy", "from": 0, "to": 1},
+    {"op": "copy", "from": 0, "to": 2},
+    {"op": "eval", "seq": 1, "segment": "qr", "logits": true},
+    {"op": "eval", "seq": 2, "segment": "auth", "logits": true},
+    {"op": "eval", "seq": 3, "segment": "root", "logits": false},
+    {"op": "eval", "seq": 3, "segment": "auth", "logits": true},
+    {"op": "compare", "left": 2, "right": 3, "label": "auth_branch_vs_scratch"}
+  ]
+}

@@ -156,6 +156,16 @@ Then run:
   --ctx 2048
 ```
 
+Or execute a JSON KV plan:
+
+```bash
+./build/native-probes/semantic-kv-runner \
+  -m /data/llama/models/Qwen3-4B-Q4_K_M.gguf \
+  --plan examples/native/prefix_branch_plan.json \
+  --threads 10 \
+  --ctx 2048
+```
+
 See `docs/native-kv-probe.md`.
 
 ## Example Output

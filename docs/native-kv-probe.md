@@ -138,12 +138,14 @@ arbitrary recomposition of cached blocks
 provider-level KV surgery for closed APIs
 ```
 
-## Next Implementation Target
+## JSON Plan Runner
 
-Turn this probe into a small native harness that accepts a JSON plan:
+The fixed probe is kept for reproducible historical benchmarking. The native
+runner accepts a JSON plan:
 
 ```json
 {
+  "config": {"top_k": 5, "suppress_logs": true},
   "segments": [
     {"id": "A", "text": "..."},
     {"id": "noise", "text": "..."},
@@ -157,5 +159,34 @@ Turn this probe into a small native harness that accepts a JSON plan:
 }
 ```
 
-That would let the Python semantic router produce cache-operation plans instead
-of only producing prompts.
+Run:
+
+```bash
+./build/native-probes/semantic-kv-runner \
+  -m /data/llama/models/Qwen3-4B-Q4_K_M.gguf \
+  --plan examples/native/prefix_branch_plan.json \
+  --threads 10 \
+  --ctx 2048 \
+  --batch 1024
+```
+
+Supported ops:
+
+```text
+eval
+copy
+remove
+shift
+keep
+compare
+```
+
+Example plans:
+
+```text
+examples/native/prefix_branch_plan.json
+examples/native/middle_removal_plan.json
+```
+
+This lets the Python semantic router produce cache-operation plans instead of
+only producing prompts.

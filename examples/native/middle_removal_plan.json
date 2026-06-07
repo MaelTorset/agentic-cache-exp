@@ -1,0 +1,40 @@
+{
+  "config": {
+    "top_k": 5,
+    "suppress_logs": true
+  },
+  "segments": [
+    {
+      "id": "root",
+      "text": "System: answer tersely.\nShared prefix: auth cookie bug report.\n",
+      "add_bos": true
+    },
+    {
+      "id": "noise",
+      "text": "Noise: QR scanner camera settings, billing dashboard columns, analytics events.\n"
+    },
+    {
+      "id": "task_body",
+      "text": "Task: local HTTP rejects SameSite=None without Secure. Expected local cookie is SameSite=Lax. "
+    },
+    {
+      "id": "task_last",
+      "text": "Answer:"
+    }
+  ],
+  "ops": [
+    {"op": "eval", "seq": 0, "segment": "root", "logits": false},
+    {"op": "eval", "seq": 0, "segment": "noise", "logits": false},
+    {"op": "eval", "seq": 0, "segment": "task_body", "logits": false},
+    {"op": "eval", "seq": 0, "segment": "task_last", "logits": true},
+    {"op": "eval", "seq": 1, "segment": "root", "logits": false},
+    {"op": "eval", "seq": 1, "segment": "task_body", "logits": false},
+    {"op": "eval", "seq": 1, "segment": "task_last", "logits": true},
+    {"op": "copy", "from": 0, "to": 2},
+    {"op": "remove", "seq": 2, "segment": "noise"},
+    {"op": "shift", "seq": 2, "start_after_segment": "noise", "delta_segment": "noise", "direction": "negative"},
+    {"op": "remove", "seq": 2, "segment": "task_last"},
+    {"op": "eval", "seq": 2, "segment": "task_last", "start_after_segment": "task_body", "logits": true},
+    {"op": "compare", "left": 2, "right": 1, "label": "mutated_vs_scratch"}
+  ]
+}
