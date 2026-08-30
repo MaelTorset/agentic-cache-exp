@@ -48,6 +48,27 @@ pre-generation logits:
 generation_text_match: true
 ```
 
+On the usefulness side the honest answer is negative, and two measurements say
+so.
+
+**Branch switching is not faster than stock llama.cpp.** The branch-switch
+benchmark (2026-07-23) measured 1.11 s/switch for resident KV branches against
+7.00 s for a *single* prefix-cache slot. But a real deployment is not limited to
+one slot: replaying the identical schedule through `llama-server -np 2` costs
+1.20 s/switch (2026-07-25, 5-run medians), matching the custom runner to within
+run-to-run noise. The single-slot figure measured a configuration choice, not a
+property of semantic branching. See
+`benchmark-research-conclusion/2026-07-25-llama-server-multislot-baseline.md`.
+
+**Selective forgetting is not steerable.** Removing a span from mid-context and
+RoPE-shifting the survivors is cheap but inexact, and the damage varies 27x
+depending on what is removed. Across 36 factorial cases, no attention-derived
+signal predicts that damage (best |rho| = 0.37) and none beats the trivial
+baseline of "how far the span sits from the end of the context" (rho = 0.46).
+Attention mass turns out to re-encode position rather than dependence. Only
+19.4% of splices reproduced greedy output exactly. See
+`benchmark-research-conclusion/2026-07-25-attention-does-not-predict-splice-damage.md`.
+
 The quality result is more conservative: routing reduced active prompt tokens
 by about 62% on the fixture benchmark, but Qwen3-4B did not solve the bug better
 than the full noisy prompt. Cache correctness is currently stronger than
@@ -67,6 +88,9 @@ agentic-task quality.
 - Copies shared-prefix KV state into semantic branches with `llama_memory_seq_cp`.
 - Compares branch logits against scratch evaluation.
 - Generates text directly from copied KV branches with greedy decoding.
+- Benchmarks branch switching (`auth -> qr -> auth -> qr`) under resident
+  branch cache, single-slot prefix cache, and full re-prefill conditions
+  (`scripts/run_branch_switch_benchmark.py`, `docs/branch-switch-benchmark.md`).
 
 ## Quick Start
 

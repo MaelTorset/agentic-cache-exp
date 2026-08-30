@@ -1,4 +1,5 @@
 #include "llama.h"
+#include "ggml-backend.h"
 
 #include <algorithm>
 #include <chrono>
@@ -200,7 +201,106 @@ struct Args {
     int32_t n_threads = 10;
     int32_t n_gpu_layers = 0;
     int32_t n_seq_max = 8;
+    bool dump_attention = false;
 };
+
+// Attention capture.
+//
+// The post-softmax attention weights are the tensors named "kq_soft_max-<il>"
+// (llama-graph.cpp). They are only materialized on the non-flash-attention
+// path, so enabling this forces LLAMA_FLASH_ATTN_TYPE_DISABLED.
+//
+// Layout of kq_soft_max: ne = {n_kv, n_tokens, n_head, n_stream}, i.e.
+// weight[src_pos, query_pos, head, stream]. We sum over queries, heads and
+// streams to get the attention mass each source position received, and sum
+// that over layers.
+//
+// Mass accumulates across every decode of the run, so after evaluating a
+// context segment by segment each position holds the total attention it
+// received from every query that could see it. That is the quantity the
+// selective-forgetting predictor needs: how much the surviving tokens actually
+// leaned on the span being considered for removal.
+struct AttentionCapture {
+    bool enabled = false;
+    std::vector<double> mass;   // indexed by source position, summed over layers
+    // Same quantity kept per layer, because attention is not uniform across
+    // depth: early layers are positional, late layers carry the semantic
+    // routing, so an aggregate can hide a signal that only exists at one end.
+    std::vector<std::vector<double>> mass_by_layer;
+    int64_t layers_seen = 0;
+    int64_t n_kv = 0;
+    int64_t n_queries = 0;
+    int64_t n_heads = 0;
+    int64_t decodes = 0;
+    int64_t queries_total = 0;  // summed over decodes and layers
+    bool saw_non_f32 = false;
+    std::vector<uint8_t> scratch;
+};
+
+static bool attention_cb_eval(struct ggml_tensor * t, bool ask, void * user_data) {
+    auto * capture = static_cast<AttentionCapture *>(user_data);
+    const bool is_attn = capture->enabled && std::strncmp(t->name, "kq_soft_max", 11) == 0;
+
+    if (ask) {
+        return is_attn;
+    }
+    if (!is_attn) {
+        return true;  // returning false would cancel the whole graph
+    }
+
+    const char * dash = std::strrchr(t->name, '-');
+    const int layer = dash != nullptr ? std::atoi(dash + 1) : 0;
+    if (layer == 0) {
+        capture->decodes += 1;
+    }
+    if (capture->mass.size() < static_cast<size_t>(t->ne[0])) {
+        capture->mass.resize(static_cast<size_t>(t->ne[0]), 0.0);
+    }
+    if (capture->mass_by_layer.size() <= static_cast<size_t>(layer)) {
+        capture->mass_by_layer.resize(static_cast<size_t>(layer) + 1);
+    }
+    std::vector<double> & layer_mass = capture->mass_by_layer[static_cast<size_t>(layer)];
+    if (layer_mass.size() < static_cast<size_t>(t->ne[0])) {
+        layer_mass.resize(static_cast<size_t>(t->ne[0]), 0.0);
+    }
+    capture->queries_total += t->ne[1];
+
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+    const uint8_t * data;
+    if (is_host) {
+        data = static_cast<const uint8_t *>(t->data);
+    } else {
+        capture->scratch.resize(ggml_nbytes(t));
+        ggml_backend_tensor_get(t, capture->scratch.data(), 0, ggml_nbytes(t));
+        data = capture->scratch.data();
+    }
+
+    if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16) {
+        capture->saw_non_f32 = true;
+        return true;
+    }
+
+    for (int64_t stream = 0; stream < t->ne[3]; ++stream) {
+        for (int64_t head = 0; head < t->ne[2]; ++head) {
+            for (int64_t query = 0; query < t->ne[1]; ++query) {
+                const uint8_t * row = data + stream * t->nb[3] + head * t->nb[2] + query * t->nb[1];
+                for (int64_t src = 0; src < t->ne[0]; ++src) {
+                    const float weight = t->type == GGML_TYPE_F32
+                        ? reinterpret_cast<const float *>(row)[src]
+                        : ggml_fp16_to_fp32(reinterpret_cast<const ggml_fp16_t *>(row)[src]);
+                    capture->mass[static_cast<size_t>(src)] += weight;
+                    layer_mass[static_cast<size_t>(src)] += weight;
+                }
+            }
+        }
+    }
+
+    capture->layers_seen += 1;
+    capture->n_kv = t->ne[0];
+    capture->n_queries = t->ne[1];
+    capture->n_heads = t->ne[2];
+    return true;
+}
 
 struct Range {
     int32_t p0 = 0;
@@ -228,7 +328,11 @@ struct SequenceState {
 };
 
 static void usage(const char * argv0) {
-    std::fprintf(stderr, "usage: %s -m model.gguf --plan plan.json [--threads 10] [--ctx 2048] [--batch 1024] [--seqs 8]\n", argv0);
+    std::fprintf(
+        stderr,
+        "usage: %s -m model.gguf --plan plan.json [--threads 10] [--ctx 2048] [--batch 1024] [--seqs 8]"
+        " [--dump-attention]\n",
+        argv0);
 }
 
 static Args parse_args(int argc, char ** argv) {
@@ -248,6 +352,8 @@ static Args parse_args(int argc, char ** argv) {
             args.n_seq_max = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--ngl") == 0 && i + 1 < argc) {
             args.n_gpu_layers = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--dump-attention") == 0) {
+            args.dump_attention = true;
         } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             std::exit(0);
@@ -527,7 +633,17 @@ static Generation generate_greedy(
 
     try {
         for (int32_t i = 0; i < max_tokens; ++i) {
-            const llama_token token = llama_sampler_sample(sampler, ctx, -1);
+            llama_token token;
+            if (i == 0 && state.has_logits) {
+                // The context-level logits may belong to another sequence's
+                // last decode; the first token must come from this sequence's
+                // captured logits.
+                token = static_cast<llama_token>(std::distance(
+                    state.logits.logits.begin(),
+                    std::max_element(state.logits.logits.begin(), state.logits.logits.end())));
+            } else {
+                token = llama_sampler_sample(sampler, ctx, -1);
+            }
             if (llama_vocab_is_eog(vocab, token)) {
                 generation.stopped_eog = true;
                 break;
@@ -568,11 +684,20 @@ int main(int argc, char ** argv) {
         llama_model * model = llama_model_load_from_file(args.model_path.c_str(), model_params);
         if (model == nullptr) throw std::runtime_error("failed to load model");
 
+        AttentionCapture attention;
+        attention.enabled = args.dump_attention;
+
         llama_context_params ctx_params = llama_context_default_params();
         ctx_params.n_ctx = args.n_ctx;
         ctx_params.n_batch = args.n_batch;
         ctx_params.n_seq_max = args.n_seq_max;
         ctx_params.no_perf = false;
+        if (args.dump_attention) {
+            // kq_soft_max only exists when attention is not fused.
+            ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            ctx_params.cb_eval = attention_cb_eval;
+            ctx_params.cb_eval_user_data = &attention;
+        }
         llama_context * ctx = llama_init_from_model(model, ctx_params);
         if (ctx == nullptr) throw std::runtime_error("failed to create context");
         llama_set_n_threads(ctx, args.n_threads, args.n_threads);
@@ -728,6 +853,31 @@ int main(int argc, char ** argv) {
             first = false;
         }
         std::printf("},\n");
+        if (args.dump_attention) {
+            std::printf(
+                "  \"attention\":{\"n_kv\":%lld,\"n_queries\":%lld,\"n_heads\":%lld,\"layers\":%lld,"
+                "\"decodes\":%lld,\"queries_total\":%lld,\"unsupported_dtype\":%s,\"mass\":[",
+                static_cast<long long>(attention.n_kv),
+                static_cast<long long>(attention.n_queries),
+                static_cast<long long>(attention.n_heads),
+                static_cast<long long>(attention.layers_seen),
+                static_cast<long long>(attention.decodes),
+                static_cast<long long>(attention.queries_total),
+                attention.saw_non_f32 ? "true" : "false");
+            for (size_t i = 0; i < attention.mass.size(); ++i) {
+                std::printf("%s%.8f", i == 0 ? "" : ",", attention.mass[i]);
+            }
+            std::printf("],\"mass_by_layer\":[");
+            for (size_t layer = 0; layer < attention.mass_by_layer.size(); ++layer) {
+                std::printf("%s[", layer == 0 ? "" : ",");
+                const std::vector<double> & values = attention.mass_by_layer[layer];
+                for (size_t i = 0; i < values.size(); ++i) {
+                    std::printf("%s%.8f", i == 0 ? "" : ",", values[i]);
+                }
+                std::printf("]");
+            }
+            std::printf("]},\n");
+        }
         std::printf("  \"comparisons\":{");
         for (size_t i = 0; i < comparisons.size(); ++i) {
             const Comparison & c = comparisons[i];
